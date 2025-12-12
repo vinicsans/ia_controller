@@ -10,7 +10,7 @@ from collections import deque
 # ================= CONFIGURAÇÕES =================
 URL_CAMERA = "http://172.16.1.44/capture" 
 MODEL_PATH = "modelo-v2.tflite" 
-PORTA_SERIAL = "COM5"  # <--- CONFIRA A PORTA NO ARDUINO IDE!
+PORTA_SERIAL = "COM5"  # <--- CONFIRA A PORTA!
 LABELS = ["Circulo", "Triangulo", "Quadrado", "Erro", "Vazio"]
 
 TAMANHO_MEDIA = 10 
@@ -19,21 +19,30 @@ historico_predicoes = deque(maxlen=TAMANHO_MEDIA)
 # =================================================
 
 # --- 1. Inicialização Serial ---
+print("Conectando Serial...")
 try:
     ser = serial.Serial(PORTA_SERIAL, 115200, timeout=0.1)
-    time.sleep(2) # Tempo para o ESP32 reiniciar após abrir a porta
-    print(f"Conectado na porta {PORTA_SERIAL}")
+    time.sleep(2) # Espera o ESP32 resetar
+    print(f"Serial conectado em {PORTA_SERIAL}")
 except Exception as e:
-    print(f"ERRO SERIAL: {e}. Feche o Monitor Serial do Arduino!")
+    print(f"ERRO SERIAL: {e}")
+    print("DICA: Feche o Serial Monitor do Arduino IDE antes de rodar este script!")
     exit()
 
 # --- 2. Carregar Modelo IA ---
 print("Carregando IA...")
-interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
-interpreter.allocate_tensors()
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-h, w, c = input_details[0]['shape'][1], input_details[0]['shape'][2], input_details[0]['shape'][3]
+try:
+    interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+    h, w, c = input_details[0]['shape'][1], input_details[0]['shape'][2], input_details[0]['shape'][3]
+except Exception as e:
+    print(f"Erro ao carregar modelo: {e}")
+    ser.close()
+    exit()
+
+print("Sistema Iniciado. Pressione 'q' para sair.")
 
 last_sent_label = ""
 
@@ -63,33 +72,57 @@ while True:
 
         # 6. Média Móvel (Precisão)
         historico_predicoes.append(output_data)
+        
         if len(historico_predicoes) == TAMANHO_MEDIA:
             media = np.mean(historico_predicoes, axis=0)
             idx = np.argmax(media)
             label = LABELS[idx]
             conf = media[idx]
 
-            # 7. Envio Serial com Feedback
+            # Definição de Cores para Desenho
+            if label == "Vazio":
+                cor = (200, 200, 200) # Cinza/Branco para Vazio
+            elif label == "Erro":
+                cor = (0, 0, 255)     # Vermelho para Erro
+            else:
+                cor = (0, 255, 0)     # Verde para Formas
+
+            # 7. Envio Serial (Lógica Principal)
             if conf >= CONFIDENCE_THRESHOLD:
+                # Se detectou algo novo (ex: mudou de Quadrado para Vazio)
                 if label != last_sent_label:
                     print(f"\n[>>>] ENVIANDO: {label} ({conf*100:.1f}%)")
-                    ser.write(f"{label}\n".encode('utf-8')) # Envia com \n
+                    
+                    # Envia para o Arduino
+                    msg = f"{label}\n"
+                    ser.write(msg.encode('utf-8'))
                     ser.flush()
                     
-                    # Ouve se o ESP32 respondeu
-                    time.sleep(0.1)
-                    if ser.in_waiting > 0:
-                        echo = ser.readline().decode('utf-8').strip()
-                        print(f"[RESPOSTA ESP32]: {echo}")
-                    
                     last_sent_label = label
+                
+                # Desenha na tela
+                texto_display = f"{label}: {conf:.2f}"
+            else:
+                # Se a confiança for baixa, mostra "Inseguro"
+                texto_display = "Inseguro..."
+                cor = (0, 165, 255) # Laranja
 
-        cv2.imshow("IA System - PC Vision", frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'): break
+            # Feedback Visual na Janela
+            # Converte cinza para BGR para poder desenhar colorido
+            frame_display = cv2.cvtColor(frame_gray, cv2.COLOR_GRAY2BGR)
+            cv2.putText(frame_display, texto_display, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, cor, 2)
+            cv2.imshow("IA System - PC Vision", frame_display)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
     except Exception as e:
         print(f"Erro no loop: {e}")
         time.sleep(1)
 
-ser.close()
+# Limpeza final
+try:
+    ser.close()
+except:
+    pass
 cv2.destroyAllWindows()
