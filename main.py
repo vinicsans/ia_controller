@@ -7,8 +7,18 @@ import time
 import os
 from collections import deque
 
-# ================= CONFIGURAÇÕES =================
-URL_CAMERA = "http://172.16.1.44/capture" 
+# ================= CONFIGURAÇÕES INICIAIS =================
+# Agora o IP é solicitado ao usuário
+ip_usuario = input("Digite o IP do ESP32-CAM (ex: 192.168.0.100): ").strip()
+
+# Se o usuário não digitar http://, o código adiciona automaticamente
+if not ip_usuario.startswith("http://"):
+    URL_CAMERA = f"http://{ip_usuario}/capture"
+else:
+    URL_CAMERA = f"{ip_usuario}/capture"
+
+print(f"Conectando à câmera em: {URL_CAMERA}")
+
 MODEL_PATH = "modelo-v2.tflite" 
 PORTA_SERIAL = "COM5"  # <--- CONFIRA A PORTA!
 LABELS = ["Circulo", "Triangulo", "Quadrado", "Erro", "Vazio"]
@@ -16,7 +26,7 @@ LABELS = ["Circulo", "Triangulo", "Quadrado", "Erro", "Vazio"]
 TAMANHO_MEDIA = 10 
 CONFIDENCE_THRESHOLD = 0.7 
 historico_predicoes = deque(maxlen=TAMANHO_MEDIA)
-# =================================================
+# ==========================================================
 
 # --- 1. Inicialização Serial ---
 print("Conectando Serial...")
@@ -42,7 +52,7 @@ except Exception as e:
     ser.close()
     exit()
 
-print("Sistema Iniciado. Pressione 'q' para sair.")
+print("\n--- Sistema Pronto! Pressione 'q' na janela da imagem para sair ---\n")
 
 last_sent_label = ""
 
@@ -52,9 +62,12 @@ while True:
         img_resp = urllib.request.urlopen(URL_CAMERA, timeout=5)
         imgnp = np.array(bytearray(img_resp.read()), dtype=np.uint8)
         frame = cv2.imdecode(imgnp, -1)
-        if frame is None: continue
+        
+        if frame is None:
+            print("Erro: Frame vazio.")
+            continue
 
-        # 4. Processamento P&B
+        # 4. Processamento P&B (Mantendo a lógica original)
         frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         img_resized = cv2.resize(frame_gray, (w, h))
         
@@ -79,48 +92,43 @@ while True:
             label = LABELS[idx]
             conf = media[idx]
 
-            # Definição de Cores para Desenho
+            # Definição de Cores
             if label == "Vazio":
-                cor = (200, 200, 200) # Cinza/Branco para Vazio
+                cor = (200, 200, 200)
             elif label == "Erro":
-                cor = (0, 0, 255)     # Vermelho para Erro
+                cor = (0, 0, 255)
             else:
-                cor = (0, 255, 0)     # Verde para Formas
+                cor = (0, 255, 0)
 
-            # 7. Envio Serial (Lógica Principal)
+            # 7. Envio Serial
             if conf >= CONFIDENCE_THRESHOLD:
-                # Se detectou algo novo (ex: mudou de Quadrado para Vazio)
                 if label != last_sent_label:
-                    print(f"\n[>>>] ENVIANDO: {label} ({conf*100:.1f}%)")
+                    print(f"[>>>] ENVIANDO PARA MQTT: {label} ({conf*100:.1f}%)")
                     
-                    # Envia para o Arduino
                     msg = f"{label}\n"
                     ser.write(msg.encode('utf-8'))
                     ser.flush()
                     
                     last_sent_label = label
                 
-                # Desenha na tela
                 texto_display = f"{label}: {conf:.2f}"
             else:
-                # Se a confiança for baixa, mostra "Inseguro"
-                texto_display = "Inseguro..."
-                cor = (0, 165, 255) # Laranja
+                texto_display = "Processando..."
+                cor = (0, 165, 255)
 
-            # Feedback Visual na Janela
-            # Converte cinza para BGR para poder desenhar colorido
+            # Feedback Visual
             frame_display = cv2.cvtColor(frame_gray, cv2.COLOR_GRAY2BGR)
-            cv2.putText(frame_display, texto_display, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, cor, 2)
-            cv2.imshow("IA System - PC Vision", frame_display)
+            cv2.putText(frame_display, texto_display, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, cor, 2)
+            cv2.imshow("IA System - SENAI IoT", frame_display)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     except Exception as e:
-        print(f"Erro no loop: {e}")
+        print(f"Aguardando conexão ou erro no IP: {e}")
         time.sleep(1)
 
-# Limpeza final
+# Limpeza
 try:
     ser.close()
 except:
