@@ -18,7 +18,6 @@ void startCameraServer();
 void reconnect() {
   while (!client.connected()) {
     Serial.print("Tentando conexao MQTT...");
-    // Cria um ID único para evitar conflitos
     String clientId = "ESP32CAM-Bridge-" + String(random(0xffff), HEX);
     
     if (client.connect(clientId.c_str())) {
@@ -36,7 +35,7 @@ void setup() {
   Serial.begin(115200);
   pinMode(2, OUTPUT); 
 
-  // --- CONFIGURAÇÃO DA CÂMERA (Mantida) ---
+  // --- CONFIGURAÇÃO DA CÂMERA ---
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -65,12 +64,28 @@ void setup() {
   config.fb_count = 2;
 
   esp_err_t err = esp_camera_init(&config);
-  if (err != ESP_OK) return;
+  if (err != ESP_OK) {
+    Serial.printf("Erro na camera: 0x%x", err);
+    return;
+  }
 
   // --- CONEXÃO WI-FI ---
+  Serial.print("Conectando ao WiFi...");
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  while (WiFi.status() != WL_CONNECTED) { 
+    delay(500); 
+    Serial.print("."); 
+  }
+  
+  // --- EXIBIÇÃO DO IP E URL ---
   Serial.println("\nWiFi Conectado!");
+  Serial.print("Endereço IP: ");
+  Serial.println(WiFi.localIP());
+  
+  Serial.print("URL para o Stream: http://");
+  Serial.print(WiFi.localIP());
+  Serial.println("/"); // Geralmente o stream inicia na raiz ou /stream
+  // ----------------------------
 
   // --- CONFIGURAÇÃO MQTT ---
   client.setServer(mqtt_server, 1883);
@@ -80,11 +95,10 @@ void setup() {
 }
 
 void loop() {
-  // Garante que o MQTT esteja sempre conectado
   if (!client.connected()) {
     reconnect();
   }
-  client.loop(); // Mantém a comunicação MQTT viva
+  client.loop();
 
   // ESCUTA A SERIAL (Vindo do Python no USB)
   if (Serial.available() > 0) {
@@ -92,11 +106,9 @@ void loop() {
     comando.trim();
 
     if (comando.length() > 0) {
-      // 1. Confirma na Serial para o PC ver
       Serial.print("CONFIRMADO_RECEBIMENTO: ");
       Serial.println(comando);
 
-      // 2. PUBLICA VIA MQTT (Envia para o outro ESP)
       bool published = client.publish(topic_publish, comando.c_str());
       
       if(published) {
@@ -105,12 +117,10 @@ void loop() {
         Serial.println("MQTT: Erro ao enviar!");
       }
 
-      // 3. AÇÃO VISUAL (Pisca LED)
       digitalWrite(2, HIGH); delay(50); digitalWrite(2, LOW);
 
-      // --- LÓGICA DE ATUADORES LOCAIS ---
       if (comando == "Circulo") {
-        // digitalWrite(PINO_RELE, HIGH);
+        // Lógica local aqui
       } 
     }
   }
